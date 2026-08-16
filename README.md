@@ -81,26 +81,27 @@ Python Event Producer를 통해 주문 데이터를 이벤트 형태로 변환�
 
 ## Current Architecture
 
+```text
 Olist Dataset
-        ↓
+      ↓
 Python Event Producer
-        ↓
+      ↓
 Kafka
-        ↓
+      ↓
 Spark Structured Streaming
-        ↓ (Medallion Architecture)
+      ↓
 Bronze Layer
-        ↓
+      ↓
 Silver Layer (Apache Iceberg)
-        ↓
+      ↓
 Gold Layer (Apache Iceberg)
-        ↓
+      ↓
 Amazon S3
-        ↓
+      ↓
 Amazon Athena
-        ↓
+      ↓
 Power BI
-
+```
 
 ### Technology Stack
 
@@ -201,6 +202,7 @@ Athena를 통해 조회할 수 있다.
 
 하지만 주문/배송 데이터는 상태가 계속 변경된다.
 
+```text
 예:
 
 order_1001 = ORDER_CREATED
@@ -208,6 +210,7 @@ order_1001 = ORDER_CREATED
 order_1001 = SHIPPED
         ↓
 order_1001 = DELIVERED
+```
 
 따라서 단순 Append만으로 처리할 경우
 동일 주문에 대한 여러 상태 레코드가 계속 쌓이게 되고,
@@ -266,6 +269,7 @@ Power BI에서 매번 대규모 Silver 데이터를 대상으로
 주문 수, 매출, 배송 지연률 등을 계산하는 대신
 Gold Layer에서 주요 KPI를 사전에 집계한다.
 
+```text
 Silver
 수억/수십억 rows
         ↓
@@ -277,6 +281,7 @@ Gold
 Athena
         ↓
 Power BI
+```
 
 이를 통해 BI 계층에서 처리해야 하는 데이터량과
 반복적인 집계 연산을 줄이는 것을 목표로 한다.
@@ -377,6 +382,7 @@ Athena를 통해 Gold 데이터를 직접 조회하는 것이
 
 이 경우 다음과 같은 분석 Serving Layer 확장을 고려한다.
 
+```text
 AWS Gold / S3
         ↓
 OneLake Shortcut
@@ -388,5 +394,7 @@ Direct Lake Semantic Model
    ┌──────────────┐
    ↓              ↓
 Power BI         Excel
+
+```
 Dashboard    Ad-hoc Analysis
 
