@@ -394,7 +394,8 @@ Direct Lake Semantic Model
    ┌──────────────┐
    ↓              ↓
 Power BI         Excel
+Dashboard    Ad-hoc Analysis
 
 ```
-Dashboard    Ad-hoc Analysis
+
 
