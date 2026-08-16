@@ -1,7 +1,7 @@
 # E-commerce Order & Logistics Lakehouse
 
 > Apache Iceberg 기반의 이커머스 주문·물류 이벤트 처리 파이프라인 구축 프로젝트
-
+ 
 ## 1. Project Overview
 
 이 프로젝트는 이커머스의 주문 및 배송 이벤트를 수집하고,
