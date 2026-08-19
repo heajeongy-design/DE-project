@@ -56,3 +56,25 @@ print("payments:", payments_sample.shape)
 
 print("\n=== ORDER STATUS ===")
 print(orders_sample["order_status"].value_counts())
+
+#샘플 데이터 csv 변환 -- 실제 OMS/WMS에서 실시간 이벤트가 들어오는 상황 구현을 위한 개발용 입력 데이터
+import os
+
+os.makedirs("data/processed", exist_ok=True)
+
+orders_sample.to_csv(
+    "data/processed/orders_sample.csv",
+    index=False
+)
+
+items_sample.to_csv(
+    "data/processed/items_sample.csv",
+    index=False
+)
+
+payments_sample.to_csv(
+    "data/processed/payments_sample.csv",
+    index=False
+)
+
+print("\n샘플 데이터 저장 완료")
