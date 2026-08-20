@@ -28,10 +28,13 @@ Bronze Raw Parquet
 <img width="1091" height="219" alt="image" src="https://github.com/user-attachments/assets/647c6693-bd7b-436e-8725-8f624d1f14fe" />
 
 [Kafka Event Producer]
+
 <img width="847" height="882" alt="image" src="https://github.com/user-attachments/assets/510514e3-aca0-4e5c-87bd-af5f9aabd19e" />
 
 [Kafka Consumer 확인]
+
 <img width="1907" height="256" alt="image" src="https://github.com/user-attachments/assets/bad601ba-85f0-49fe-b505-7242fb9fd211" />
 
 [Spark Batch → Bronze 적재]
+
 <img width="1874" height="924" alt="image" src="https://github.com/user-attachments/assets/c8546289-7fcc-403f-a9b3-b489d7037fde" />
