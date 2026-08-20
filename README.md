@@ -5,6 +5,7 @@
 ## Documentation
 
 - Daily Development Log (Notion)
+  : https://app.notion.com/p/DE-Project-3c09cd4b60ef8086ad22d3ae0fe7d9a8?source=copy_link
 
 ---
 
