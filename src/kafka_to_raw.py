@@ -8,6 +8,7 @@ from pyspark.sql.functions import (
     current_timestamp,
     to_date,
     hour,
+    to_timestamp,
     unix_timestamp,
     max as spark_max
 )
@@ -27,17 +28,12 @@ TOPIC = "order-events"
 # Bronze Raw Parquet 저장 위치
 RAW_PATH = "/opt/spark/work-dir/output/raw"
 
-# 마지막으로 처리한 Kafka Offset 저장 위치
-# 다음 Batch 실행 시 여기서 읽어서 이어서 처리
+# 다음 Batch에서 이어서 읽기 위한 Kafka Offset 저장 위치
 OFFSET_FILE = "/opt/spark/work-dir/output/state/kafka_offsets.json"
 
 
 # --------------------------------------------------
 # 1. Spark Session 생성
-# --------------------------------------------------
-#
-# Structured Streaming이 아닌 일반 Spark Batch Job
-# 실행 → Kafka 데이터 처리 → Bronze 저장 → 종료
 # --------------------------------------------------
 
 spark = (
@@ -58,32 +54,19 @@ event_schema = StructType([
     StructField("order_id", StringType(), True),
     StructField("customer_id", StringType(), True),
     StructField("event_type", StringType(), True),
-
-    # Olist 원본 이벤트 발생 시간
     StructField("original_event_time", StringType(), True),
-
-    # 현재 시간 기준으로 재구성한 이벤트 발생 시간
     StructField("event_time", StringType(), True),
-
-    # Kafka Producer가 실제 전송한 시간
     StructField("ingestion_time", StringType(), True),
-
     StructField("order_status", StringType(), True)
 ])
 
 
 # --------------------------------------------------
-# 3. 이전 Batch의 Offset 확인
-# --------------------------------------------------
-#
-# 첫 실행
-# → earliest부터 시작
-#
-# 이후 실행
-# → kafka_offsets.json에 저장된 Offset부터 시작
+# 3. 이전 Offset 불러오기
 # --------------------------------------------------
 
 starting_offsets = "earliest"
+saved_offsets = None
 
 if os.path.exists(OFFSET_FILE):
 
@@ -111,20 +94,14 @@ else:
 
 
 # --------------------------------------------------
-# 4. Kafka 데이터를 Batch 방식으로 읽기
-# --------------------------------------------------
-#
-# readStream ❌
-# read       ✅
-#
-# 실행 시점까지 Kafka에 들어온 데이터만 읽고 종료
+# 4. Kafka 데이터를 일반 Spark Batch로 읽기
 # --------------------------------------------------
 
 kafka_df = (
     spark.read
     .format("kafka")
 
-    # Docker 내부에서 Kafka 접근
+    # Docker 내부 Kafka 주소
     .option(
         "kafka.bootstrap.servers",
         "kafka:29092"
@@ -135,13 +112,13 @@ kafka_df = (
         TOPIC
     )
 
-    # 이전 처리 지점부터 시작
+    # 이전 Batch에서 저장한 위치부터 시작
     .option(
         "startingOffsets",
         starting_offsets
     )
 
-    # Job 실행 시점의 최신 Offset까지만 처리
+    # 현재 최신 Offset까지만 읽고 종료
     .option(
         "endingOffsets",
         "latest"
@@ -152,20 +129,20 @@ kafka_df = (
 
 
 # --------------------------------------------------
-# 5. Kafka JSON 메시지 Parsing
+# 5. Kafka JSON Parsing
 # --------------------------------------------------
 
 parsed_df = (
     kafka_df
     .select(
 
-        # Kafka value(JSON String)를 컬럼 구조로 변환
+        # Kafka value(JSON)를 컬럼으로 변환
         from_json(
             col("value").cast("string"),
             event_schema
         ).alias("event"),
 
-        # 추적을 위해 Kafka Metadata도 Bronze에 보존
+        # Kafka Metadata
         col("topic"),
         col("partition"),
         col("offset"),
@@ -183,19 +160,19 @@ parsed_df = (
 
 
 # --------------------------------------------------
-# 6. Bronze Metadata 생성
+# 6. Bronze용 컬럼 생성
 # --------------------------------------------------
 
 raw_df = (
     parsed_df
 
-    # Spark Batch가 실제 처리한 시간
+    # Spark Batch 실제 처리 시각
     .withColumn(
         "processing_time",
         current_timestamp()
     )
 
-    # Bronze 물리 Partition 기준
+    # Bronze Partition 기준
     .withColumn(
         "raw_date",
         to_date(col("processing_time"))
@@ -206,25 +183,26 @@ raw_df = (
         hour(col("processing_time"))
     )
 
-    # Kafka 유입 → Spark 처리까지 걸린 시간
+    # Producer ingestion_time 문자열을 Timestamp로 변환
     .withColumn(
-    "lag_sec",
-    unix_timestamp(col("processing_time"))
-    - unix_timestamp(
+        "ingestion_timestamp",
         to_timestamp(
             col("ingestion_time"),
             "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX"
         )
     )
+
+    # Kafka 유입 이후 Spark Batch 처리까지 걸린 시간
+    .withColumn(
+        "lag_sec",
+        unix_timestamp(col("processing_time"))
+        - unix_timestamp(col("ingestion_timestamp"))
+    )
 )
 
 
 # --------------------------------------------------
-# 7. 이번 Batch 데이터 고정
-# --------------------------------------------------
-#
-# Spark는 Lazy Evaluation이므로
-# 이후 여러 Action에서 같은 Batch 데이터를 사용하기 위해 Cache
+# 7. 같은 DataFrame을 여러 번 사용하므로 Cache
 # --------------------------------------------------
 
 raw_df.cache()
@@ -233,7 +211,7 @@ batch_count = raw_df.count()
 
 
 print("\n=== KAFKA BATCH COUNT ===")
-print("rows:", batch_count)
+print(f"rows: {batch_count}")
 
 
 # --------------------------------------------------
@@ -254,19 +232,16 @@ if batch_count == 0:
 # --------------------------------------------------
 # 9. Bronze Raw Parquet 저장
 # --------------------------------------------------
-#
-# Bronze는 가공을 최소화하고 Append 방식으로 보존
-#
-# raw/
-# └── raw_date=YYYY-MM-DD/
-#     └── raw_hour=HH/
-# --------------------------------------------------
 
 (
     raw_df.write
+
+    # 기존 Bronze 데이터는 유지하고 신규 데이터만 추가
     .mode("append")
+
     .format("parquet")
 
+    # 날짜 / 시간 기준 Partition
     .partitionBy(
         "raw_date",
         "raw_hour"
@@ -279,7 +254,7 @@ if batch_count == 0:
 
 
 # --------------------------------------------------
-# 10. 이번 Batch에서 처리한 마지막 Kafka Offset 확인
+# 10. 이번 Batch에서 처리한 Partition별 마지막 Offset 확인
 # --------------------------------------------------
 
 offset_rows = (
@@ -298,11 +273,7 @@ offset_rows = (
 
 
 # --------------------------------------------------
-# 11. 다음 Batch의 시작 Offset 계산
-# --------------------------------------------------
-#
-# 이번 Batch가 Offset 10까지 처리했다면
-# 다음에는 11부터 읽어야 함
+# 11. 다음 Batch 시작 Offset 계산
 # --------------------------------------------------
 
 next_offsets = {
@@ -312,17 +283,16 @@ next_offsets = {
 for row in offset_rows:
 
     partition = str(row["partition"])
-    next_offset = row["max_offset"] + 1
 
-    next_offsets[TOPIC][partition] = next_offset
+    # 이번에 offset 10까지 읽었다면
+    # 다음 실행은 11부터 시작
+    next_offsets[TOPIC][partition] = (
+        row["max_offset"] + 1
+    )
 
 
 # --------------------------------------------------
-# 12. Offset State 저장
-# --------------------------------------------------
-#
-# 이 파일이 있어야 15분 뒤 다음 Job에서
-# 이전 메시지를 다시 읽지 않고 이어서 처리 가능
+# 12. 다음 실행을 위해 Offset 저장
 # --------------------------------------------------
 
 os.makedirs(
@@ -353,7 +323,7 @@ print(
 
 
 # --------------------------------------------------
-# 13. 처리 결과 확인
+# 13. Bronze 적재 결과 확인
 # --------------------------------------------------
 
 print("\n=== BRONZE BATCH SAMPLE ===")
