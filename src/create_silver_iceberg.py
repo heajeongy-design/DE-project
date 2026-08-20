@@ -1,6 +1,5 @@
 from pyspark.sql import SparkSession
 
-
 # --------------------------------------------------
 # 1. Spark + Iceberg Session 생성
 # --------------------------------------------------
@@ -54,11 +53,10 @@ CREATE NAMESPACE IF NOT EXISTS local.silver
 # --------------------------------------------------
 #
 # 운영 전략
-# - Bronze : Kafka 이벤트를 실시간 Append
-# - Silver : 약 15분 단위 Micro-batch MERGE 가정
-# - MOR    : 주문 상태 변경이 빈번하므로 쓰기 비용 절감 목적
-# - Compaction : 일 1회 실행 예정
-# - Snapshot Expiration : 일 1회 실행 예정
+# - Bronze : Kafka → Spark Structured Streaming으로 실시간 적재
+# - Silver : Spark Batch Job을 15분 주기로 실행하여 MERGE
+# - Gold   : Spark Batch Job으로 1시간 또는 일 단위 집계
+# - Maintenance : Compaction / Snapshot Expiration 하루 1회
 #
 # Maintenance 작업은 별도 스크립트 / Airflow DAG로 관리한다.
 # --------------------------------------------------
