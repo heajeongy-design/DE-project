@@ -121,32 +121,37 @@ latest_df = (
 
 silver_source_df = (
     latest_df
-
     .select(
         col("order_id"),
         col("customer_id"),
         col("event_id"),
         col("event_type"),
 
-        # Olist 원본 이벤트 발생시간
-        col("original_event_time").cast("timestamp").alias("original_event_time"),
+        # Bronze STRING → Silver TIMESTAMP
+        col("original_event_time")
+            .cast("timestamp")
+            .alias("original_event_time"),
 
-        # 시뮬레이션 Event 발생시간
-        col("event_time"),
+        col("event_time")
+            .cast("timestamp")
+            .alias("event_time"),
 
-        # Kafka 유입시간
-        col("ingestion_time"),
+        col("ingestion_time")
+            .cast("timestamp")
+            .alias("ingestion_time"),
 
-        # 최신 Event Type을 현재 주문 상태로 사용
+        # 최신 이벤트를 현재 주문 상태로 사용
         col("event_type").alias("current_status"),
 
-        # Bronze에서 계산한 처리 지연시간
-        col("lag_sec").cast("long").alias("ingestion_lag_sec"),
+        col("lag_sec")
+            .cast("long")
+            .alias("ingestion_lag_sec"),
 
         # Partition 기준 날짜
-        to_date(col("event_time")).alias("event_date"),
+        to_date(
+            col("event_time").cast("timestamp")
+        ).alias("event_date"),
 
-        # Silver 최종 갱신시간
         current_timestamp().alias("updated_at")
     )
 )
