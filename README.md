@@ -1,6 +1,6 @@
 # E-commerce Order & Logistics Lakehouse
 
-> Apache Iceberg 기반의 이커머스 주문·물류 이벤트 처리 Lakehouse 프로젝트
+> Olist 주문 데이터를 이용한 Kafka → Spark Batch → Apache Iceberg 기반 데이터 파이프라인 프로젝트
 
 ## Documentation
 
@@ -11,34 +11,46 @@
 
 # 1. Project Overview
 
-이 프로젝트는 이커머스의 주문 및 배송 이벤트를 수집하고,
-데이터 변경과 지속적인 데이터 증가를 안정적으로 처리할 수 있는
-Lakehouse 아키텍처를 설계하고 구현하는 것을 목표로 한다.
+이커머스 주문/배송 데이터를 이용하여 데이터가 수집되고,
+Bronze → Silver → Gold로 가공되는 데이터 파이프라인을 구현하는 프로젝트이다.
 
-단순히 데이터를 적재하고 시각화하는 것에 그치지 않고
-다음과 같은 문제를 중심으로 설계하였다.
+Olist 데이터는 이미 수집이 끝난 과거 데이터이기 때문에
+Python Producer를 이용해 주문 데이터를 이벤트 형태로 재구성하고 Kafka로 전달한다.
 
-- 주문/배송 데이터에서 Apache Iceberg가 필요한 이유는 무엇인가?
-- 데이터가 지속적으로 증가할 경우 어떻게 확장할 것인가?
-- 주문 상태가 변경될 때 기존 데이터를 어떻게 효율적으로 갱신할 것인가?
-- Batch Job이 반복 실행될 때 이미 처리한 데이터를 어떻게 다시 읽지 않을 것인가?
-- 장애 발생 시 데이터를 다시 처리할 수 있는 구조를 어떻게 만들 것인가?
-- 반복적인 데이터 처리와 조회 비용을 어떻게 줄일 것인가?
-- 데이터 엔지니어뿐만 아니라 분석가와 현업 사용자도 쉽게 데이터를 활용할 수 있는가?
-- 장기 운영 시 Small File과 Snapshot을 어떻게 관리할 것인가?
-- 파이프라인 실패를 어떻게 감지하고 운영자가 확인할 수 있도록 할 것인가?
+현재는 로컬 Docker 환경에서 다음 구간까지 구현하였다.
+
+```text
+Olist Dataset
+      ↓
+Python Event Producer
+      ↓
+Apache Kafka
+      ↓
+Spark Batch
+      ↓
+Bronze (Parquet)
+      ↓
+Spark Batch
+      ↓
+Silver (Apache Iceberg)
+      ↓
+Spark Batch
+      ↓
+Gold (Apache Iceberg)
+```
+
+이후 AWS S3 / Glue / Athena 연동과 Airflow 스케줄링,
+Power BI 연결을 진행할 예정이다.
 
 ---
 
-# 2. Domain Selection
+# 2. Domain
 
 ## E-commerce Order & Logistics
 
-프로젝트 도메인은 **이커머스 주문 및 물류 데이터**로 선정하였다.
+프로젝트 도메인은 이커머스 주문 및 물류 데이터로 선정하였다.
 
-이커머스 주문은 한 번 생성되고 끝나는 데이터가 아니다.
-
-하나의 주문은 다음과 같이 여러 상태를 거칠 수 있다.
+이커머스 주문은 생성 이후 여러 상태를 거친다.
 
 ```text
 ORDER_CREATED
@@ -50,16 +62,11 @@ SHIPPED
 DELIVERED
 ```
 
-또한 주문 취소, 배송 지연 등의 상황으로 인해
-이미 저장된 주문의 상태가 이후 변경될 수 있다.
+주문이 생성된 이후에도 결제, 배송, 취소 등의 이벤트가 발생하면서
+동일한 주문의 상태가 계속 변경될 수 있다.
 
-따라서 단순 Append 방식으로 데이터를 계속 추가하는 것보다
-기존 주문 상태를 안정적으로 갱신하고 변경 데이터를 관리할 수 있는
-테이블 구조가 필요하다고 판단하였다.
-
-이러한 데이터 특성이 Apache Iceberg의 `MERGE`, Snapshot,
-Partition 관리 기능을 실습하기에 적합하다고 판단하여
-프로젝트 도메인으로 선정하였다.
+이러한 특성을 이용해 Kafka 이벤트 처리와
+Iceberg의 MERGE 기능을 함께 실습할 수 있도록 구성하였다.
 
 ---
 
@@ -67,10 +74,9 @@ Partition 관리 기능을 실습하기에 적합하다고 판단하여
 
 ## Olist Brazilian E-Commerce Dataset
 
-실제 이커머스 환경과 유사한 데이터를 사용하기 위해
-Olist의 공개 이커머스 데이터셋을 활용한다.
+Olist의 공개 이커머스 데이터셋을 사용하였다.
 
-주요 데이터는 다음과 같다.
+원본 데이터에는 다음과 같은 데이터가 포함되어 있다.
 
 - Orders
 - Customers
@@ -79,13 +85,10 @@ Olist의 공개 이커머스 데이터셋을 활용한다.
 - Sellers
 - Order Items
 
-Olist는 과거 주문 데이터이므로 실제 운영 환경처럼 이벤트가
-지속적으로 발생하지 않는다.
+Olist 데이터는 과거 주문 데이터이므로
+Python을 이용해 주문 Lifecycle Event 형태로 변환하였다.
 
-따라서 Python Event Producer를 통해 과거 주문 데이터를
-이벤트 형태로 변환하여 주문 Lifecycle을 재현한다.
-
-현재 사용하는 주요 이벤트는 다음과 같다.
+현재 생성하는 이벤트는 다음과 같다.
 
 ```text
 ORDER_CREATED
@@ -95,25 +98,26 @@ DELIVERED
 CANCELLED
 ```
 
-이를 통해 다음과 같은 흐름을 시뮬레이션한다.
+원본 이벤트 발생 시각은 `original_event_time`으로 보존하고,
+Producer가 이벤트를 재생하는 시점은 별도의 `event_time`으로 관리한다.
 
 ```text
 Olist Historical Data
         ↓
-Python Event Producer
+Event 생성
         ↓
-Order Lifecycle Events
+Python Producer
         ↓
-Kafka
+Kafka order-events
 ```
 
 ---
 
 # 4. Architecture
 
-## Current Architecture
+## Current
 
-현재 프로젝트의 전체 목표 아키텍처는 다음과 같다.
+현재 구현된 범위는 다음과 같다.
 
 ```text
 Olist Dataset
@@ -132,102 +136,105 @@ Spark Batch
 Silver Layer
 Apache Iceberg V2
       ↓
+Spark Batch
+      ↓
 Gold Layer
 Apache Iceberg
+```
+
+현재 Kafka → Bronze → Silver → Gold까지
+로컬 Docker 환경에서 구현 및 실행을 확인하였다.
+
+## 진행 예정
+
+```text
+Gold Iceberg
       ↓
 Amazon S3
+      ↓
+AWS Glue Data Catalog
       ↓
 Amazon Athena
       ↓
 Power BI
 ```
 
-현재 구현 단계에서는 로컬 Docker 환경에서
-Kafka → Spark → Bronze 파이프라인을 구성하고,
-Silver Iceberg 테이블 구조와 운영 전략을 설계하였다.
-
-AWS S3, Glue Data Catalog, Athena, Gold Layer 및 BI 연결은
-후속 단계에서 구현한다.
+파이프라인 실행 자동화는 이후 Airflow를 추가하여 진행할 예정이다.
 
 ---
 
-## Processing Strategy
+# 5. Processing Strategy
 
-초기 설계에서는 Spark Structured Streaming을 고려하였다.
+처음에는 Spark Structured Streaming 방식도 고려했지만,
+현재 프로젝트에서는 초 단위 처리가 필요한 상황을 가정하지 않았다.
 
-그러나 현재 프로젝트에서는 초 단위 실시간 처리가 필요한 요구사항보다
-약 15분 단위의 데이터 갱신을 가정하고 있다.
+Kafka에 이벤트를 저장해두고 일정 주기로 Spark Batch를 실행하여
+새로 들어온 데이터를 처리하는 방식으로 구성하였다.
 
-이 경우 Streaming Job을 계속 실행하는 것보다
-주기적으로 Spark Batch Job을 실행하는 구조가
-운영 복잡도와 리소스 관리 측면에서 적합하다고 판단하였다.
+현재 계획하고 있는 실행 주기는 다음과 같다.
 
-현재 처리 전략은 다음과 같다.
-
-| 구간 | 처리 방식 | 계획 주기 |
+| 구간 | 처리 방식 | 주기 |
 |---|---|---|
-| Event 발생 | Python → Kafka | 지속적 |
-| Kafka → Bronze | Spark Batch + offset 증분 처리 | 약 15분 |
-| Bronze → Silver | Spark Batch + MERGE | 약 15분 |
-| Silver → Gold | Spark Batch | 1시간 또는 일 단위 |
-| Iceberg Maintenance | Compaction / Snapshot Expiration | 일 단위 |
+| Event → Kafka | Python Producer | 이벤트 발생 시 |
+| Kafka → Bronze | Spark Batch | 약 15분 |
+| Bronze → Silver | Spark Batch | 약 15분 |
+| Silver → Gold | Spark Batch | 추후 결정 |
+| Iceberg Maintenance | Batch | 진행 예정 |
 
-Kafka는 이벤트를 수집하고 보관하는 역할을 담당하고,
-Spark Batch Job은 실행 시점까지 쌓인 신규 이벤트를 처리한다.
+현재는 각 Job을 수동으로 실행하여 동작을 검증하고 있으며,
+실제 주기 실행은 Airflow 단계에서 적용할 예정이다.
 
 ---
 
-## Technology Stack
+# 6. Technology Stack
 
-| Layer | Technology | Purpose |
+| 구분 | Technology | 상태 |
 |---|---|---|
-| Data Source | Olist Dataset | 이커머스 주문/물류 원본 데이터 |
-| Event Simulation | Python | 과거 데이터를 Lifecycle Event로 재구성 |
-| Event Broker | Apache Kafka | 주문 이벤트 수집 및 버퍼링 |
-| Processing | Apache Spark | Batch 기반 증분 처리 및 데이터 변환 |
-| Table Format | Apache Iceberg | MERGE, Snapshot, 테이블 관리 |
-| File Format | Apache Parquet | Columnar 데이터 저장 |
-| Storage | Amazon S3 | 데이터 파일 저장 |
-| Catalog | AWS Glue Data Catalog | Iceberg 테이블 메타데이터 관리 |
-| Query | Amazon Athena | Gold 데이터 SQL 조회 및 검증 |
-| BI | Power BI | KPI 및 운영 대시보드 |
-| Orchestration | Apache Airflow | Batch 및 Maintenance 스케줄링 예정 |
+| Data Source | Olist Dataset | 완료 |
+| Event Simulation | Python | 완료 |
+| Event Broker | Apache Kafka | 완료 |
+| Processing | Apache Spark | 완료 |
+| File Format | Apache Parquet | 완료 |
+| Table Format | Apache Iceberg | 완료 |
+| Storage | Amazon S3 | 진행 예정 |
+| Catalog | AWS Glue Data Catalog | 진행 예정 |
+| Query | Amazon Athena | 진행 예정 |
+| BI | Power BI | 진행 예정 |
+| Orchestration | Apache Airflow | 진행 예정 |
 
 ---
 
-# 5. Medallion Architecture
+# 7. Medallion Architecture
 
-데이터는 목적에 따라 **Bronze → Silver → Gold** 3계층으로 분리한다.
+데이터는 용도에 따라 Bronze → Silver → Gold로 구분하였다.
 
 ```text
 Bronze
-Raw Event 보존
+Raw Event 저장
       ↓
 Silver
-정제 + 주문 상태 관리
+주문별 최신 상태 관리
       ↓
 Gold
-BI용 KPI 집계
+일별 주문 집계
 ```
 
 ---
 
-## Bronze - Raw Event Layer
+## 7.1 Bronze - Raw Event Layer
 
-Bronze는 Kafka에서 수집한 주문 이벤트를
-최대한 원본에 가까운 형태로 보존하는 계층이다.
+Bronze에서는 Kafka에서 받은 이벤트를 Parquet 형태로 저장한다.
 
-현재 Kafka 데이터를 Spark Batch로 읽어
-Parquet 형식으로 저장하도록 구현하였다.
-
-주요 컬럼은 다음과 같다.
+현재 구현된 주요 컬럼은 다음과 같다.
 
 - event_id
 - order_id
 - customer_id
 - event_type
+- original_event_time
 - event_time
 - ingestion_time
+- order_status
 - topic
 - partition
 - offset
@@ -235,12 +242,11 @@ Parquet 형식으로 저장하도록 구현하였다.
 - processing_time
 - lag_sec
 
-Kafka Metadata인 `partition`과 `offset`도 함께 저장하여
-어떤 Kafka 데이터가 처리되었는지 추적할 수 있도록 한다.
+Kafka의 `partition`, `offset`도 같이 저장한다.
 
-### Partition Strategy
+### Partition
 
-Bronze 데이터는 처리 날짜와 시간을 기준으로 Partition한다.
+Bronze Parquet은 처리 날짜와 시간을 기준으로 저장한다.
 
 ```text
 output/raw/
@@ -249,95 +255,80 @@ output/raw/
         └── *.parquet
 ```
 
-### Offset Management
+### Offset 관리
 
-Spark Batch가 실행될 때 Kafka 전체 데이터를 반복해서 읽지 않도록
-Partition별 마지막 처리 Offset을 관리한다.
+Batch를 실행할 때마다 Kafka 데이터를 처음부터 읽지 않도록
+Partition별 마지막 Offset을 저장한다.
 
 ```text
-Previous Offset 확인
-        ↓
-신규 Kafka Event 조회
-        ↓
-Spark Batch 처리
-        ↓
-Bronze Parquet 저장
-        ↓
-Next Offset 저장
+이전 Offset 확인
+      ↓
+새로운 Event만 조회
+      ↓
+Bronze 저장
+      ↓
+다음 Offset 저장
 ```
 
-예를 들어 이전 실행에서 Partition 0의 Offset 11까지 처리했다면
-다음 실행에서는 Offset 12부터 처리한다.
+이전 실행에서 Offset 11까지 처리했다면
+다음 실행에서는 Offset 12부터 읽는 방식이다.
 
-이를 통해 Batch Job을 반복 실행하면서도
-신규 이벤트만 증분 처리할 수 있도록 구성하였다.
-
-### Why Keep Bronze?
-
-Bronze 데이터를 보존하는 가장 중요한 이유는 **재처리 가능성**이다.
-
-Silver 변환 로직에 오류가 발생하거나
-새로운 비즈니스 로직이 추가되는 경우,
-원천 데이터를 다시 수집하지 않고 Bronze 데이터를 이용하여
-Silver Layer를 다시 생성할 수 있도록 한다.
+현재 Kafka → Bronze 증분 처리까지 구현하였다.
 
 ---
 
-## Silver - Processed Order Layer
+## 7.2 Silver - Processed Order Layer
 
-Silver에서는 Bronze 이벤트를 정제하여
-분석 및 주문 상태 관리에 사용할 수 있는 데이터로 변환한다.
+Silver에서는 Bronze의 이벤트를 주문 단위의 최신 상태로 정리한다.
 
-주요 처리 대상은 다음과 같다.
-
-- `event_id` 기반 중복 제거
-- Timestamp 정규화
-- 이벤트 데이터 정제
-- `order_id` 기준 주문 최신 상태 관리
-- `MERGE INTO` 기반 Upsert
-
-Bronze에는 전체 Lifecycle Event를 보존하고,
-Silver에서는 분석에 사용할 주문의 정제된 상태를 관리하는 방향으로 설계하였다.
+현재 구현한 처리 과정은 다음과 같다.
 
 ```text
-Bronze Events
-
-ORDER_CREATED
-PAYMENT_APPROVED
-SHIPPED
-DELIVERED
-
-        ↓
-
-Spark Batch
-
-        ↓
-
-Silver Orders
-
-order_id → current_status
+Bronze
+      ↓
+event_id 기준 중복 제거
+      ↓
+order_id별 최신 Event 선택
+      ↓
+Timestamp 변환
+      ↓
+current_status 생성
+      ↓
+Iceberg MERGE
+      ↓
+Silver
 ```
+
+실제 적용한 내용:
+
+- `event_id` 기준 중복 제거
+- `order_id`별 최신 이벤트 1건 선택
+  - `event_time DESC`
+  - 동일한 경우 `offset DESC`
+- `original_event_time` → TIMESTAMP
+- `event_time` → TIMESTAMP
+- `ingestion_time` → TIMESTAMP
+- 최신 `event_type`을 `current_status`로 저장
+- `event_time`에서 `event_date` 생성
+- `order_id` 기준 MERGE
+
+MERGE에서는 기존 주문보다 새로운 이벤트가 들어온 경우 UPDATE하고,
+기존에 없는 주문이면 INSERT한다.
 
 ---
 
-## Silver Iceberg Strategy
+## 7.3 Silver Iceberg
 
-Silver Layer부터 Apache Iceberg를 적용한다.
-
-현재 Silver 테이블은 **Iceberg Format Version 2**를 기준으로 설계하였다.
+Silver 테이블은 Apache Iceberg Format Version 2로 생성하였다.
 
 ```text
 format-version = 2
 ```
 
-Format Version 2는 Row-level 변경을 지원하므로
-주문 상태처럼 기존 데이터에 대한 `UPDATE`, `DELETE`, `MERGE`가
-필요한 데이터 처리에 활용할 수 있다.
+주문 상태처럼 기존 Row의 변경이 필요한 데이터를 처리하기 위해
+Silver 테이블에서 `MERGE INTO`를 사용한다.
 
-### Merge-on-Read
-
-Silver는 주문 상태 변경이 반복적으로 발생하는 데이터 특성을 고려하여
-Merge-on-Read(MOR) 전략을 적용하도록 설계하였다.
+현재 Silver에는 Merge-on-Read 설정을 적용하였다.
 
 ```text
 write.update.mode = merge-on-read
@@ -345,436 +336,236 @@ write.merge.mode  = merge-on-read
 write.delete.mode = merge-on-read
 ```
 
-Merge-on-Read는 변경이 발생할 때마다 기존 Data File 전체를
-즉시 다시 작성하는 대신 변경 정보를 별도로 관리하고,
-조회 시 이를 병합하는 방식이다.
-
-따라서 변경이 잦은 Silver Layer에서
-쓰기 비용을 줄이는 방향으로 활용할 수 있다.
-
-다만 MOR은 Delete File 및 Small File 증가 가능성이 있으므로
-Maintenance 전략과 함께 운영해야 한다.
+현재 로컬 Iceberg 테이블에서
+Bronze → Silver MERGE 실행까지 확인하였다.
 
 ---
 
-## Gold - Business Summary Layer
+## 7.4 Gold - Business Summary Layer
 
-Gold는 Power BI 등 분석 도구에서 반복적으로 계산해야 하는
-비즈니스 KPI를 미리 집계하는 계층이다.
+Gold에서는 Silver 데이터를 일별로 집계한다.
 
-예상 테이블:
+현재 구현한 테이블은 다음과 같다.
 
 ```text
 daily_order_summary
 ```
 
-주요 KPI:
+현재 계산하는 값:
 
-- Total Orders
-- Total Sales
-- Cancellation Rate
-- Average Delivery Time
-- Delayed Delivery Rate
+- `total_orders`
+- `created_orders`
+- `approved_orders`
+- `shipped_orders`
+- `delivered_orders`
+- `delivery_rate`
 
-Power BI에서 매번 대규모 Silver 데이터를 직접 집계하지 않고
-Gold Layer에서 계산된 데이터를 중심으로 조회하도록 설계한다.
-
-Gold Layer는 후속 단계에서 구현할 예정이다.
-
----
-
-# 6. Why Apache Iceberg?
-
-## Problem
-
-일반적인 S3 + Parquet 기반 Data Lake에서도
-데이터를 저장하고 Athena를 통해 조회할 수 있다.
-
-하지만 주문/배송 데이터는 상태가 계속 변경된다.
+처리 과정은 다음과 같다.
 
 ```text
-order_1001 = ORDER_CREATED
-        ↓
-order_1001 = PAYMENT_APPROVED
-        ↓
-order_1001 = SHIPPED
-        ↓
-order_1001 = DELIVERED
+Silver Orders
+      ↓
+event_date 기준 GroupBy
+      ↓
+상태별 주문 수 집계
+      ↓
+delivery_rate 계산
+      ↓
+Gold MERGE
 ```
 
-단순 Append 방식만 사용할 경우 동일한 주문에 대한
-여러 상태 레코드가 계속 누적된다.
-
-따라서 현재 주문 상태를 조회할 때마다
-가장 최신 레코드를 찾는 추가 로직이 필요하다.
-
----
-
-## 1. MERGE 기반 변경 데이터 처리
-
-Iceberg를 사용하면 새로운 주문은 INSERT하고,
-기존 주문에 새로운 상태 이벤트가 발생하면 UPDATE하는
-Upsert 패턴을 구현할 수 있다.
+`delivery_rate`는 다음 기준으로 계산한다.
 
 ```text
-New Order
-    → INSERT
-
-Existing Order + New Status
-    → UPDATE
+delivered_orders / total_orders
 ```
 
-이를 `MERGE INTO`를 통해 처리하여
-상태 변경이 반복되는 주문 데이터를 관리한다.
+Gold는 `order_date`를 기준으로 MERGE한다.
+
+동일 날짜가 이미 존재하면 집계 값을 UPDATE하고,
+없는 날짜라면 INSERT한다.
+
+현재 `daily_order_summary` 테이블 생성과
+Silver → Gold 집계 실행까지 확인하였다.
+
+매출, 취소율, 평균 배송기간 등의 추가 KPI는
+관련 데이터를 추가한 이후 확장할 예정이다.
 
 ---
 
-## 2. Snapshot 기반 데이터 관리
+# 8. Why Apache Iceberg?
 
-Iceberg는 테이블 변경 시 Snapshot을 관리한다.
+일반적인 Parquet 파일만 사용해도 데이터를 저장할 수 있지만,
+이번 프로젝트의 주문 데이터는 상태가 변경되는 특징이 있다.
 
-이를 통해 테이블이 어떻게 변경되었는지 추적하고
-특정 시점의 데이터 상태를 확인할 수 있는 기반을 제공한다.
-
-또한 잘못된 데이터 처리나 로직 변경이 발생했을 때
-데이터 변경 이력을 추적하는 데 활용할 수 있다.
-
----
-
-## 3. Partition Evolution
-
-데이터 규모와 조회 패턴이 변경될 경우
-Partition 전략 역시 변경될 가능성이 있다.
-
-Iceberg는 Partition Evolution을 지원하므로
-기존 데이터를 전체 재작성하지 않고
-향후 Partition 전략을 변경할 수 있는 구조를 제공한다.
-
----
-
-## 4. Schema Evolution
-
-운영 과정에서 새로운 컬럼이 추가되거나
-데이터 구조가 변경될 가능성이 있다.
-
-Iceberg의 Schema Evolution 기능을 활용하면
-테이블 구조 변화에 대응하기 용이하다.
-
----
-
-# 7. Iceberg Maintenance Strategy
-
-Iceberg를 사용하는 것만으로
-테이블 운영 문제가 자동으로 해결되는 것은 아니다.
-
-주기적인 Batch 적재와 MERGE가 반복되면
-Small File, Delete File, Snapshot 및 Metadata가 증가할 수 있다.
-
-따라서 데이터 처리 Job과 별도로
-Maintenance Job을 운영하는 구조를 고려한다.
+예를 들어 하나의 주문이 다음과 같이 변경될 수 있다.
 
 ```text
-15분
-Kafka → Bronze
-
-15분
-Bronze → Silver MERGE
-
-1시간 / 일 단위
-Silver → Gold
-
-일 단위
-Iceberg Maintenance
+order_1001
+ORDER_CREATED
+      ↓
+PAYMENT_APPROVED
+      ↓
+SHIPPED
+      ↓
+DELIVERED
 ```
 
-주요 Maintenance 작업은 다음과 같다.
+Bronze에서는 각각의 이벤트를 보존하지만
+Silver에서는 주문별 현재 상태가 필요하다.
 
-### Compaction
+따라서 `order_id`를 기준으로 기존 데이터를 갱신할 수 있도록
+Iceberg의 `MERGE INTO`를 사용하였다.
 
-작은 Data File을 더 큰 파일로 병합하여
-조회 시 읽어야 하는 파일 수를 줄인다.
-
-### Snapshot Expiration
-
-오래된 Snapshot을 정리하여
-불필요한 Metadata가 계속 증가하는 것을 방지한다.
-
-### Orphan File Cleanup
-
-더 이상 현재 테이블 Metadata에서 참조하지 않는
-불필요한 파일을 정리한다.
-
-Maintenance는 데이터 처리 로직과 분리하여
-향후 Airflow DAG를 통해 주기적으로 실행하는 방향으로 설계한다.
+현재 프로젝트에서 Iceberg를 실제 적용한 부분은
+Silver와 Gold 테이블이다.
 
 ---
 
-# 8. Failure Recovery & Idempotency
+# 9. Failure Recovery
 
-Batch 파이프라인에서는 동일한 데이터가 다시 처리되거나
-중간 단계에서 Job이 실패할 가능성을 고려해야 한다.
+현재 구현에서 재처리를 고려한 부분은 다음과 같다.
 
-현재 구조에서는 다음 요소를 통해 재처리 가능성을 확보한다.
+### Bronze Raw Event 보존
 
-### Bronze Raw Data 보존
+Kafka에서 받은 이벤트를 Bronze에 보존한다.
 
-원본 이벤트를 Bronze에 유지하여
-Silver 로직에 문제가 발생하더라도 다시 처리할 수 있도록 한다.
+Silver 처리 로직을 수정하더라도
+Bronze 데이터를 다시 읽어 Silver를 생성할 수 있다.
 
 ### Kafka Offset 관리
 
-Partition별 마지막 처리 Offset을 관리하여
-다음 Batch에서 처리해야 할 위치를 추적한다.
+Kafka Partition별 마지막 처리 Offset을 저장하여
+다음 Batch에서 신규 이벤트부터 처리한다.
 
-### event_id 기반 중복 제거
+### event_id 중복 제거
 
-동일 이벤트가 재처리되더라도
-Silver에서 `event_id`를 기준으로 중복 데이터를 제거할 수 있도록 설계한다.
+Silver 처리 시 `event_id`를 기준으로 중복 이벤트를 제거한다.
 
-### MERGE 기반 주문 상태 관리
+### Silver MERGE
 
-Silver에서는 `order_id`를 기준으로 기존 주문과 신규 이벤트를 비교하여
-INSERT 또는 UPDATE하는 구조를 사용한다.
-
----
-
-# 9. Cost & Performance Considerations
-
-이 프로젝트에서는 단순히 많은 기술을 사용하는 것보다
-불필요한 데이터 처리와 조회를 줄이는 것을 중요하게 고려하였다.
-
----
-
-## 9.1 S3 as Storage Layer
-
-대규모 Raw/Silver 데이터를 BI 도구 내부에 중복 저장하기보다
-Amazon S3를 주요 Storage Layer로 사용한다.
-
-Iceberg는 별도의 데이터베이스 저장소 자체를 의미하는 것이 아니라,
-S3에 저장된 Parquet Data File과 Metadata를
-테이블 형태로 관리하는 Table Format이다.
-
----
-
-## 9.2 Batch Processing
-
-현재 요구사항에서는 초 단위 데이터 처리가 필요하지 않으므로
-장시간 실행되는 Streaming Job 대신
-주기적인 Spark Batch Job을 사용하는 방향을 선택하였다.
-
-이를 통해 현재 프로젝트 규모에서
-불필요한 상시 연산 리소스와 운영 복잡도를 줄이는 것을 목표로 한다.
-
----
-
-## 9.3 Gold Layer를 통한 반복 연산 감소
-
-Power BI에서 매번 대규모 Silver 데이터를 대상으로
-주문 수, 매출, 배송 지연률 등을 계산하는 대신
-Gold Layer에서 주요 KPI를 사전에 집계한다.
+`order_id` 기준으로 기존 주문과 신규 주문을 구분한다.
 
 ```text
-Silver
-대규모 상세 데이터
-        ↓
-Aggregation
-        ↓
-Gold
-BI용 집계 데이터
-        ↓
-Athena
-        ↓
-Power BI
+기존 주문 + 최신 Event
+→ UPDATE
+
+신규 주문
+→ INSERT
 ```
 
-이를 통해 BI 계층에서 처리해야 하는 데이터량과
-반복적인 집계 연산을 줄이는 것을 목표로 한다.
+---
+
+# 10. Iceberg Maintenance - 진행 예정
+
+Silver에서 MERGE가 반복되면
+파일과 Snapshot이 계속 증가할 수 있다.
+
+따라서 이후 다음 작업을 추가할 예정이다.
+
+- Compaction
+- Snapshot Expiration
+- 필요 시 Orphan File 정리
+
+실제 데이터가 반복 적재되는 상황을 만든 후
+파일 및 Snapshot 변화를 확인하면서 적용할 예정이다.
 
 ---
 
-## 9.4 Athena Query Cost
+# 11. AWS 연동 - 진행 예정
 
-Athena는 쿼리가 읽는 데이터량이
-비용과 성능에 직접적인 영향을 미친다.
+현재 Bronze / Silver / Gold는 로컬 환경에서 구현하였다.
 
-따라서 불필요한 Scan을 줄이는 방향으로 데이터를 설계한다.
+다음 단계에서는 AWS 환경으로 저장 계층을 확장할 예정이다.
 
-주요 고려 사항:
-
-- 적절한 Partition 전략
-- Parquet Columnar Format
-- Gold Layer 사전 집계
-- 불필요한 `SELECT *` 지양
-- Iceberg Metadata 활용
-
-즉 단순히 데이터를 저장하는 구조가 아니라
-**실제 분석 시 얼마나 많은 데이터를 읽어야 하는가**까지 고려한다.
-
----
-
-# 10. Why Power BI?
-
-AWS 환경만 고려한다면 Amazon QuickSight를 사용하는 방법도 있다.
-
-S3와 Athena를 중심으로 데이터가 구성되어 있기 때문에
-AWS 내부에서 분석까지 완료한다면
-아키텍처를 단순하게 유지할 수 있다는 장점이 있다.
-
-그럼에도 불구하고 Power BI를 선택한 이유는 단순히 Dashboard를 만들기 위해서가 아니라,
-향후 분석 계층을 확장할 때 동일한 비즈니스 정의를 Power BI**와 Excel에서 재사용할 수 있는 구조를 고려**했기 때문이다.
-
-모든 질문을 사전에 Dashboard KPI로 구성하는 것은 현실적으로 어렵다.
-
-반대로 질문이 발생할 때마다 다음 과정을 반복한다면
-비개발자의 데이터 접근성이 낮아진다.
+진행 예정:
 
 ```text
-현업 질문
-   ↓
-데이터 담당자 요청
-   ↓
-SQL 작성
-   ↓
-결과 추출
-   ↓
-Excel 전달
-   ↓
-현업 확인
-```
-
-[예상 KPI Dashboard]
-
-- 주문 현황
-- 매출
-- 취소율
-- 평균 배송기간
-- 배송 지연률
-- 데이터 적재 상태
-- Iceberg 운영 상태
-
-이 지표를 Power BI Semantic Model에서 정의하면
-Dashboard뿐만 아니라 Excel에서도 동일한 Semantic Model에 연결하여
-PivotTable이나 테이블 형태로 데이터를 분석할 수 있다.
-
-[Microsoft Power BI semantic model ->  excel 사용 방법]
-
-https://learn.microsoft.com/en-us/power-bi/collaborate-share/office-integration/service-analyze-in-excel?utm_source=chatgpt.com
-
----
-
-# 11. Current vs Future Architecture
-
-## Current
-
-초기 프로젝트에서는 구현 복잡도와 비용을 최소화하기 위해
-AWS 기반 데이터 파이프라인을 중심으로 구축한다.
-
-```text
-Gold Iceberg / S3
+Bronze / Silver / Gold
+        ↓
+Amazon S3
+        ↓
+AWS Glue Data Catalog
         ↓
 Amazon Athena
+```
+
+Athena에서 Gold Iceberg 테이블을 조회할 수 있는 상태까지
+구성하는 것이 다음 단계의 목표이다.
+
+---
+
+# 12. Airflow - 진행 예정
+
+현재 Spark Job은 직접 실행하고 있다.
+
+이후 Airflow를 이용해 다음 Job을 자동 실행하도록 구성할 예정이다.
+
+```text
+Kafka → Bronze
         ↓
+Bronze → Silver
+        ↓
+Silver → Gold
+```
+
+추가로 Iceberg Maintenance Job도 별도 스케줄로 구성할 예정이다.
+
+실패 알림 및 로그 확인 방식은
+Airflow 구현 단계에서 함께 정리할 예정이다.
+
+---
+
+# 13. Power BI - 진행 예정
+
+Gold 데이터를 Athena에서 조회할 수 있게 구성한 이후
+Power BI 연결을 진행할 예정이다.
+
+현재는 BI에서 사용할 데이터 구조를 만드는 단계까지 진행하였다.
+
+Power BI에서는 우선 Gold의 일별 주문 집계를 이용하여
+기본 주문 현황을 확인하는 대시보드를 구성할 예정이다.
+
+추가 KPI는 실제 Gold 데이터가 확장되는 시점에 함께 추가한다.
+
+---
+
+# 14. Future Architecture
+
+현재 목표는 우선 AWS 기반 파이프라인을 끝까지 구현하는 것이다.
+
+```text
+Kafka
+  ↓
+Spark Batch
+  ↓
+Bronze
+  ↓
+Silver Iceberg
+  ↓
+Gold Iceberg
+  ↓
+S3 / Glue
+  ↓
+Athena
+  ↓
 Power BI
 ```
 
-현재 규모에서는 별도의 분석 플랫폼을 추가하는 것보다
-Athena를 통해 Gold 데이터를 조회하는 것이
-구조가 단순하고 관리해야 하는 구성 요소가 적다고 판단하였다.
+Microsoft Fabric 연계는 현재 구현 범위에는 포함하지 않는다.
+
+프로젝트 완료 이후 데이터 활용 범위를 확장할 필요가 있을 경우
+별도의 확장 방향으로 검토할 예정이다.
 
 ---
 
-## Future Architecture
+# 15. Current Progress
 
-향후 다음과 같은 상황을 가정한다.
-
-- 데이터 규모 증가
-- 데이터 갱신 빈도 증가
-- Power BI 사용자 증가
-- 데이터 분석가 증가
-- Excel 기반 Ad-hoc 분석 요구 증가
-- 여러 클라우드 및 업무 데이터와의 통합 분석 필요
-
-이 경우 분석 Serving Layer 확장을 고려한다.
-
-```text
-AWS Gold / S3
-        ↓
-OneLake Shortcut
-        ↓
-Microsoft Fabric
-        ↓
-Semantic Model
-        ↓
-   ┌──────────────┐
-   ↓              ↓
-Power BI         Excel
-Dashboard    Ad-hoc Analysis
-```
-
-현재 단계에서는 이러한 구조를 바로 구축하지 않고,
-데이터 규모와 사용자 요구가 증가할 경우 적용할 수 있는
-확장 방향으로 고려한다.
-
----
-
-# 12. Pipeline Operation Plan
-
-최종적으로 다음과 같은 운영 구조를 목표로 한다.
-
-```text
-                  ┌────────────────────┐
-                  │ Python Producer    │
-                  └─────────┬──────────┘
-                            ↓
-                        Kafka
-                            ↓
-                  ┌────────────────────┐
-                  │ Spark Batch        │
-                  │ Kafka → Bronze     │
-                  └─────────┬──────────┘
-                            ↓
-                         Bronze
-                            ↓
-                  ┌────────────────────┐
-                  │ Spark Batch        │
-                  │ Bronze → Silver    │
-                  │ Dedup + MERGE      │
-                  └─────────┬──────────┘
-                            ↓
-                    Silver Iceberg
-                            ↓
-                  ┌────────────────────┐
-                  │ Gold Aggregation   │
-                  └─────────┬──────────┘
-                            ↓
-                     Gold Iceberg
-                            ↓
-                         Athena
-                            ↓
-                       Power BI
-
-
-별도 운영 Job
-
-Airflow
-   ├── Batch Scheduling
-   ├── Compaction
-   ├── Snapshot Expiration
-   └── Failure Alert
-```
-
-파이프라인 실패 알림과 에러 로그 분석 자동화는
-후속 단계에서 Airflow를 기반으로 구현할 예정이다.
-
----
-
-# 13. Current Progress
-
-현재까지 구현 및 설계한 범위는 다음과 같다.
+## 완료
 
 - [x] Olist 데이터 탐색
 - [x] 주문 Lifecycle Event 생성
-- [x] Docker 기반 Kafka 구성
+- [x] Docker 기반 Kafka 환경 구성
 - [x] Kafka `order-events` Topic 구성
 - [x] Python Kafka Producer 구현
 - [x] Docker 기반 Spark 환경 구성
@@ -782,14 +573,23 @@ Airflow
 - [x] Kafka Partition / Offset 기반 증분 처리
 - [x] Bronze Raw Parquet 저장
 - [x] `raw_date / raw_hour` Partition 구성
-- [x] Silver 데이터 정제 로직 작성
-- [x] Iceberg Format Version 2 전략 설계
-- [x] Silver Merge-on-Read 전략 설계
-- [ ] Silver Iceberg MERGE 실행 및 검증
-- [ ] Iceberg Compaction 구현
-- [ ] Snapshot Expiration 구현
-- [ ] Gold Layer 구현
-- [ ] AWS S3 / Glue Catalog 연동
-- [ ] Athena 조회
-- [ ] Airflow Scheduling 및 실패 알림
-- [ ] Power BI Dashboard
+- [x] Silver `event_id` 중복 제거
+- [x] Silver 주문별 최신 Event 선택
+- [x] Silver Iceberg V2 테이블 생성
+- [x] Silver Merge-on-Read 설정
+- [x] Bronze → Silver MERGE 실행
+- [x] Gold `daily_order_summary` 생성
+- [x] Silver → Gold 일별 집계
+- [x] Gold MERGE 실행 및 결과 확인
+
+## 진행 예정
+
+- [ ] SHIPPED / DELIVERED 이벤트 추가 검증
+- [ ] Iceberg Compaction
+- [ ] Snapshot Expiration
+- [ ] Amazon S3 연동
+- [ ] AWS Glue Data Catalog 연동
+- [ ] Amazon Athena 조회
+- [ ] Airflow Batch Scheduling
+- [ ] Airflow 실패 처리 / 알림
+- [ ] Power BI 연결 및 Dashboard 구성
