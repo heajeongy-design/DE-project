@@ -620,19 +620,8 @@ S3와 Athena를 중심으로 데이터가 구성되어 있기 때문에
 AWS 내부에서 분석까지 완료한다면
 아키텍처를 단순하게 유지할 수 있다는 장점이 있다.
 
-그러나 이 프로젝트에서는 데이터 파이프라인의
-최종 사용자를 데이터 엔지니어로 한정하지 않았다.
-
-물류 및 이커머스 운영 환경에서는 다음과 같은
-Ad-hoc 분석 요구가 발생할 수 있다.
-
-```text
-특정 기간 배송 지연이 증가했는가?
-
-어떤 지역에서 배송 지연이 많이 발생하는가?
-
-최근 취소율이 증가한 상품 또는 지역은 어디인가?
-```
+그럼에도 불구하고 Power BI를 선택한 이유는 단순히 Dashboard를 만들기 위해서가 아니라,
+향후 분석 계층을 확장할 때 동일한 비즈니스 정의를 Power BI**와 Excel에서 재사용할 수 있는 구조를 고려**했기 때문이다.
 
 모든 질문을 사전에 Dashboard KPI로 구성하는 것은 현실적으로 어렵다.
 
@@ -651,13 +640,9 @@ SQL 작성
 Excel 전달
    ↓
 현업 확인
-```
+```.
 
-따라서 본 프로젝트에서는 정제된 데이터를
-Dashboard뿐만 아니라 향후 현업 사용자가 직접 탐색할 수 있는
-분석 환경까지 확장하는 것을 고려하여 Power BI를 선택하였다.
-
-예상 KPI Dashboard는 다음과 같다.
+[예상 KPI Dashboard]
 
 - 주문 현황
 - 매출
@@ -666,6 +651,13 @@ Dashboard뿐만 아니라 향후 현업 사용자가 직접 탐색할 수 있는
 - 배송 지연률
 - 데이터 적재 상태
 - Iceberg 운영 상태
+
+이 지표를 Power BI Semantic Model에서 정의하면
+Dashboard뿐만 아니라 Excel에서도 동일한 Semantic Model에 연결하여
+PivotTable이나 테이블 형태로 데이터를 분석할 수 있다.
+
+[Microsoft Power BI semantic model ->  excel 사용 방법]
+https://learn.microsoft.com/en-us/power-bi/collaborate-share/office-integration/service-analyze-in-excel?utm_source=chatgpt.com
 
 ---
 
