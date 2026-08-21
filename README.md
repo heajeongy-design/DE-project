@@ -640,7 +640,7 @@ SQL 작성
 Excel 전달
    ↓
 현업 확인
-```.
+```
 
 [예상 KPI Dashboard]
 
