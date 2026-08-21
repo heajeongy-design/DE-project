@@ -657,6 +657,7 @@ Dashboard뿐만 아니라 Excel에서도 동일한 Semantic Model에 연결하�
 PivotTable이나 테이블 형태로 데이터를 분석할 수 있다.
 
 [Microsoft Power BI semantic model ->  excel 사용 방법]
+
 https://learn.microsoft.com/en-us/power-bi/collaborate-share/office-integration/service-analyze-in-excel?utm_source=chatgpt.com
 
 ---
