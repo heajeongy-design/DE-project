@@ -129,7 +129,7 @@ silver_source_df = (
         col("event_type"),
 
         # Olist 원본 이벤트 발생시간
-        col("original_event_time"),
+        col("original_event_time").cast("timestamp").alias("original_event_time"),
 
         # 시뮬레이션 Event 발생시간
         col("event_time"),
