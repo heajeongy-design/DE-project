@@ -272,12 +272,6 @@ Bronze 저장
       ↓
 다음 Offset 저장
 ```
-
-이전 실행에서 Offset 11까지 처리했다면
-다음 실행에서는 Offset 12부터 읽는 방식이다.
-
-현재 Kafka → Bronze 증분 처리까지 구현하였다.
-
 ---
 
 ## 7.2 Silver - Processed Order Layer
@@ -331,7 +325,7 @@ format-version = 2
 주문 상태처럼 기존 Row의 변경이 필요한 데이터를 처리하기 위해
 Silver 테이블에서 `MERGE INTO`를 사용한다.
 
-현재 Silver에는 Merge-on-Read 설정을 적용하였다.
+Silver에는 Merge-on-Read 설정을 적용하였다.
 
 ```text
 write.update.mode = merge-on-read
@@ -339,22 +333,17 @@ write.merge.mode  = merge-on-read
 write.delete.mode = merge-on-read
 ```
 
-현재 로컬 Iceberg 테이블에서
-Bronze → Silver MERGE 실행까지 확인하였다.
-
 ---
 
 ## 7.4 Gold - Business Summary Layer
 
 Gold에서는 Silver 데이터를 일별로 집계한다.
 
-현재 구현한 테이블은 다음과 같다.
-
 ```text
 daily_order_summary
 ```
 
-현재 계산하는 값:
+계산하는 값:
 
 - `total_orders`
 - `created_orders`
@@ -388,7 +377,7 @@ Gold는 `order_date`를 기준으로 MERGE한다.
 동일 날짜가 이미 존재하면 집계 값을 UPDATE하고,
 없는 날짜라면 INSERT한다.
 
-현재 `daily_order_summary` 테이블 생성과
+`daily_order_summary` 테이블 생성과
 Silver → Gold 집계 실행까지 확인하였다.
 
 매출, 취소율, 평균 배송기간 등의 추가 KPI는
@@ -470,9 +459,6 @@ Silver에서 MERGE가 반복되면
 - Snapshot Expiration
 - 필요 시 Orphan File 정리
 
-실제 데이터가 반복 적재되는 상황을 만든 후
-파일 및 Snapshot 변화를 확인하면서 적용할 예정이다.
-
 ---
 
 # 11. AWS 연동 - 진행 예정
@@ -493,16 +479,11 @@ AWS Glue Data Catalog
 Amazon Athena
 ```
 
-Athena에서 Gold Iceberg 테이블을 조회할 수 있는 상태까지
-구성하는 것이 다음 단계의 목표이다.
-
 ---
 
 # 12. Airflow - 진행 예정
 
 현재 Spark Job은 직접 실행하고 있다.
-
-이후 Airflow를 이용해 다음 Job을 자동 실행하도록 구성할 예정이다.
 
 ```text
 Kafka → Bronze
@@ -511,31 +492,13 @@ Bronze → Silver
         ↓
 Silver → Gold
 ```
-
-추가로 Iceberg Maintenance Job도 별도 스케줄로 구성할 예정이다.
-
-실패 알림 및 로그 확인 방식은
-Airflow 구현 단계에서 함께 정리할 예정이다.
-
 ---
 
 # 13. Power BI - 진행 예정
 
-Gold 데이터를 Athena에서 조회할 수 있게 구성한 이후
-Power BI 연결을 진행할 예정이다.
-
-현재는 BI에서 사용할 데이터 구조를 만드는 단계까지 진행하였다.
-
-Power BI에서는 우선 Gold의 일별 주문 집계를 이용하여
-기본 주문 현황을 확인하는 대시보드를 구성할 예정이다.
-
-추가 KPI는 실제 Gold 데이터가 확장되는 시점에 함께 추가한다.
-
 ---
 
 # 14. Future Architecture
-
-현재 목표는 우선 AWS 기반 파이프라인을 끝까지 구현하는 것이다.
 
 ```text
 Kafka
@@ -554,11 +517,6 @@ Athena
   ↓
 Power BI
 ```
-
-Microsoft Fabric 연계는 현재 구현 범위에는 포함하지 않는다.
-
-프로젝트 완료 이후 데이터 활용 범위를 확장할 필요가 있을 경우
-별도의 확장 방향으로 검토할 예정이다.
 
 ---
 
