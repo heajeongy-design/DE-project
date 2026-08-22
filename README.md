@@ -566,33 +566,36 @@ Microsoft Fabric 연계는 현재 구현 범위에는 포함하지 않는다.
 
 ## 완료
 
-- [x] Olist 데이터 탐색
-- [x] 주문 Lifecycle Event 생성
-- [x] Docker 기반 Kafka 환경 구성
-- [x] Kafka `order-events` Topic 구성
-- [x] Python Kafka Producer 구현
-- [x] Docker 기반 Spark 환경 구성
-- [x] Kafka → Spark Batch 처리
-- [x] Kafka Partition / Offset 기반 증분 처리
-- [x] Bronze Raw Parquet 저장
-- [x] `raw_date / raw_hour` Partition 구성
-- [x] Silver `event_id` 중복 제거
-- [x] Silver 주문별 최신 Event 선택
-- [x] Silver Iceberg V2 테이블 생성
-- [x] Silver Merge-on-Read 설정
-- [x] Bronze → Silver MERGE 실행
-- [x] Gold `daily_order_summary` 생성
-- [x] Silver → Gold 일별 집계
-- [x] Gold MERGE 실행 및 결과 확인
+- Olist 데이터 탐색
+- 주문 Lifecycle Event 생성
+- Docker 기반 Kafka 환경 구성
+- Kafka `order-events` Topic 구성
+- Python Kafka Producer 구현
+- Docker 기반 Spark 환경 구성
+- Kafka → Spark Batch 처리
+- Kafka Partition / Offset 기반 증분 처리
+- Bronze Raw Parquet 저장
+- `raw_date / raw_hour` Partition 구성
+- 전체 Lifecycle Event 37,444건 Kafka 전송 및 Bronze 처리 검증
+- Silver `event_id` 중복 제거
+- Silver 주문별 최신 Event 선택
+- Silver Iceberg V2 테이블 생성
+- Silver Merge-on-Read 설정
+- Bronze → Silver MERGE 실행
+- Silver 주문 9,997건 최신 상태 반영 확인
+- SHIPPED / DELIVERED 상태 반영 확인
+- Gold `daily_order_summary` 생성
+- Silver → Gold 일별 집계
+- Gold MERGE 실행 및 결과 확인
 
 ## 진행 예정
 
-- [ ] SHIPPED / DELIVERED 이벤트 추가 검증
-- [ ] Iceberg Compaction
-- [ ] Snapshot Expiration
-- [ ] Amazon S3 연동
-- [ ] AWS Glue Data Catalog 연동
-- [ ] Amazon Athena 조회
-- [ ] Airflow Batch Scheduling
-- [ ] Airflow 실패 처리 / 알림
-- [ ] Power BI 연결 및 Dashboard 구성
+- 전체 데이터 기준 Gold KPI 재검증
+- Iceberg Compaction
+- Snapshot Expiration
+- Amazon S3 연동
+- AWS Glue Data Catalog 연동
+- Amazon Athena 조회
+- Airflow Batch Scheduling
+- Airflow 실패 처리 / 알림
+- Power BI 연결 및 Dashboard 구성
