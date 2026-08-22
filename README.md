@@ -141,9 +141,12 @@ Spark Batch
 Gold Layer
 Apache Iceberg
 ```
+초기 20건의 이벤트를 이용하여 kafka event flow를 검증하였고,
+전체 Lifecycle Event 37,444건을 Kafka로 전송하여
+해당 데이터 기준 파이프라인 처리를 검증하였다.
 
-현재 Kafka → Bronze → Silver → Gold까지
-로컬 Docker 환경에서 구현 및 실행을 확인하였다.
+- 전체 Event : 37,444 건
+
 
 ## 진행 예정
 
